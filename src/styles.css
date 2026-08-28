@@ -745,3 +745,22 @@ a.contact-card:hover { border-color: var(--accent); transform: translateY(-2px);
   .menu-right .hero-img.hero-wide { display: none; }
   .proof-img { height: 90px; }
 }
+
+/* ————— Mobile home layout (final overrides) ————— */
+@media (max-width: 900px) {
+  .menu-wrap { grid-template-columns: 1fr; gap: 10px; }
+  .menu-right { display: flex; flex-direction: column; align-items: stretch; }
+  .menu-right .hero-img { display: none; }
+  .menu-right .btn-quote { display: none; } /* redundant with START MY BUILD on small screens */
+  .mini-reviews { max-width: none; margin-top: 8px; }
+  .menu-title { font-size: clamp(1.6rem, 7vw, 2.1rem); }
+  .menu-tag.body-copy { font-size: 13.5px; line-height: 1.65; }
+  .btn-start { align-self: stretch; text-align: center; }
+  .gm-item { grid-template-columns: 16px 30px 1fr; gap: 10px; }
+  .scene-root { padding-bottom: 100px; }
+  .partners { gap: 13px; row-gap: 10px; }
+  .partners-label { width: 100%; }
+  .partners img { height: 17px; }
+  .menu-contact { row-gap: 6px; }
+  .boot-log.mini { min-height: 0; }
+}
