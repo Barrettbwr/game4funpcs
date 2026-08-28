@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Game4FunPCs : Custom-Built Gaming PCs</title>
+  <meta name="description" content="Custom-built gaming PCs. Zero compromises. All fun. Hand-built, stress-tested rigs designed around your style : and built to last.">
+  <link rel="icon" href="/images/logo.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+</head>
+<body>
+  <canvas id="bg" aria-hidden="true"></canvas>
+  <div class="orb orb-a" aria-hidden="true"></div>
+  <div class="orb orb-b" aria-hidden="true"></div>
+  <header class="hud">
+    <button class="logo" id="logoBtn" title="Main menu"><img src="/images/logo.png" alt="Game4FunPCs"></button>
+    <div class="hud-right">
+      <div class="hud-progress" id="hudProgress" hidden>
+        <span class="hud-level" id="hudLevel">LVL 01/05</span>
+        <div class="hud-pips" id="hudPips"></div>
+      </div>
+      <button id="soundBtn" class="hud-btn" aria-pressed="true">SOUND: ON</button>
+    </div>
+  </header>
+  <main id="scene" class="scene-root"></main>
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>
