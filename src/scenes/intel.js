@@ -29,7 +29,7 @@ export function render(root, ctx) {
 
   function draw() {
     if (tab === 'services') {
-      const SVC_IMGS = ['/images/step-1.png', '/images/step-2.png', '/images/step-3.png', '/images/footer-pc.png']
+      const SVC_IMGS = ['step-1.png', 'step-2.png', 'step-3.png', 'footer-pc.png'].map(n => IMG + n)
       body.innerHTML = `
         <div class="svc-grid">
           ${SERVICES.map(([t, d], i) => `

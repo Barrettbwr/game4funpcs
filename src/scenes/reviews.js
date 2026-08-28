@@ -2,7 +2,7 @@ import { TESTIMONIALS, REVIEW_STATS } from '../content.js'
 
 const IMG = import.meta.env.BASE_URL + 'images/'
 
-const STARS = Array.from({ length: 5 }, () => '<img src="${IMG}Symbol.png" alt="">').join('')
+const STARS = Array.from({ length: 5 }, () => `<img src="${IMG}Symbol.png" alt="">`).join('')
 
 export function render(root, ctx) {
   root.innerHTML = `

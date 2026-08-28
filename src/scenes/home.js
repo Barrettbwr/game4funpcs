@@ -50,7 +50,7 @@ export function render(root, ctx) {
         <button class="btn-quote" id="quoteBtn">GET FREE QUOTE <span class="circ">→</span></button>
         <button class="mini-reviews" id="miniReviews" title="Read the reviews">
           <div class="mini-head">
-            <span class="stars-row">${Array.from({ length: 5 }, () => '<img src="${IMG}Symbol.png" alt="">').join('')}</span>
+            <span class="stars-row">${Array.from({ length: 5 }, () => `<img src="${IMG}Symbol.png" alt="">`).join('')}</span>
             <span class="mini-score"><b>${REVIEW_STATS.rating}</b> · ${REVIEW_STATS.count} Google reviews</span>
           </div>
           <p class="mini-quote">“${TESTIMONIALS[0].text.slice(0, 92)}…”</p>
