@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import functools
 import json
+import platform
 import subprocess
 import tempfile
 from pathlib import Path
@@ -26,6 +27,25 @@ def cuda_devices() -> int:
         return ctranslate2.get_cuda_device_count()
     except Exception:
         return 0
+
+
+def is_apple_silicon() -> bool:
+    return platform.system() == "Darwin" and platform.machine() == "arm64"
+
+
+def device_note(device: str) -> str:
+    """A one-line caveat for the chosen device, or empty.
+
+    Worth surfacing because the Apple Silicon case is genuinely surprising: the
+    machine has a capable GPU and this still runs on the CPU cores, because
+    CTranslate2 has no Metal backend. int8 on ARM is respectable, but it is not
+    the GPU, and a user staring at a hot MacBook deserves to know why.
+    """
+    if device == "cpu" and is_apple_silicon():
+        return ("note: CTranslate2 has no Metal backend, so this runs on CPU cores, "
+                "not the M-series GPU. For GPU transcription on this machine use "
+                "mlx-whisper or whisper.cpp.")
+    return ""
 
 
 def pick_device(preference: str = "auto") -> tuple[str, str]:

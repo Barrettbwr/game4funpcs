@@ -95,22 +95,37 @@ Unknown keys are rejected loudly rather than silently ignored.
 Two stages are hardware-bound, and both use an NVIDIA GPU automatically when
 one is usable. Nothing needs configuring — `auto` probes and falls back.
 
-| Stage | CPU | GPU |
-| --- | --- | --- |
-| Transcription | `int8` on CPU cores | `float16` on CUDA |
-| Encoding | `libx264` | `h264_nvenc` + CUDA decode |
+| Stage | NVIDIA | Apple Silicon | Fallback |
+| --- | --- | --- | --- |
+| Transcription | `float16` on CUDA | CPU `int8` — see below | CPU `int8` |
+| Encoding | `h264_nvenc` + CUDA decode | `h264_videotoolbox` | `libx264` |
 
 ```sh
-clipper run talk.mp4 -o clips              # auto-detects
+clipper run talk.mp4 -o clips                        # auto-detects
 clipper run talk.mp4 --device cuda --encoder nvenc   # force, fail loudly if absent
+clipper cut talk.mp4 -t t.json --encoder videotoolbox
 clipper run talk.mp4 --device cpu --encoder cpu      # force CPU
 ```
 
-Both `auto` paths probe for real rather than trusting a capability list:
-ffmpeg will happily report `h264_nvenc` as compiled in on a machine with no
-driver, so the check encodes one frame. `--encoder nvenc` and `--device cuda`
-raise rather than silently falling back, which is what you want in a batch
-script.
+`auto` probes for real rather than trusting a capability list: ffmpeg reports
+`h264_nvenc` as compiled in on machines with no driver, and `h264_videotoolbox`
+on anything Apple-adjacent, so the check encodes one frame. Explicit
+`--encoder nvenc` / `--device cuda` raise rather than silently falling back,
+which is what a batch script wants.
+
+### Apple Silicon
+
+Encoding uses VideoToolbox and is fast. **Transcription does not use the GPU**,
+which surprises people: CTranslate2 — what faster-whisper runs on — has no
+Metal backend, so it uses CPU cores. `int8` on ARM is respectable, but an M-series
+GPU sitting idle while the fans spin is worth knowing about, so the CLI says so.
+
+For GPU transcription on a Mac, use `mlx-whisper` or `whisper.cpp` and feed the
+result in as a transcript — `rank` and `cut` accept any `transcript.json` with
+word timings, so no ML stack is needed on the machine doing the cutting.
+
+If you have both machines, the sensible split is: transcribe on the NVIDIA box
+(`large-v3` in float16), cut on either.
 
 **The model size is where the GPU pays off.** On CPU you take `base` because
 anything larger is too slow to iterate with. On a GPU, `large-v3` is practical,
@@ -137,7 +152,7 @@ moment.
 python -m unittest discover -s tests -v
 ```
 
-47 tests. The render tests generate a real source with ffmpeg and assert the
+53 tests. The render tests generate a real source with ffmpeg and assert the
 output is genuinely 1080×1920; they skip automatically if ffmpeg is absent.
 
 ## Layout

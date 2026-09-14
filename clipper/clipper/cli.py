@@ -57,12 +57,14 @@ def _print_table(chosen) -> None:
 # --- commands ---------------------------------------------------------------
 
 def cmd_transcribe(args: argparse.Namespace) -> int:
-    from .transcribe import pick_device, transcribe
+    from .transcribe import device_note, pick_device, transcribe
 
     source = Path(args.source)
     device, compute = pick_device(args.device)
     print(f"Transcribing {source.name} — whisper '{args.model}' on {device} ({compute})…",
           file=sys.stderr)
+    if note := device_note(device):
+        print(f"  {note}", file=sys.stderr)
     transcript = transcribe(source, model_size=args.model, language=args.language,
                             device=args.device)
     destination = Path(args.output)
@@ -89,8 +91,8 @@ def cmd_cut(args: argparse.Namespace) -> int:
     chosen = _rank(transcript, args)
     spec = _load_spec(args)
     encoder = resolve_encoder(spec.encoder)
-    print(f"Encoding with {encoder}"
-          f"{' (GPU)' if encoder.endswith('nvenc') else ' (CPU)'}", file=sys.stderr)
+    hardware = encoder != "libx264"
+    print(f"Encoding with {encoder} ({'hardware' if hardware else 'CPU'})", file=sys.stderr)
     outdir = Path(args.output)
     outdir.mkdir(parents=True, exist_ok=True)
 
@@ -123,7 +125,7 @@ def cmd_cut(args: argparse.Namespace) -> int:
 
 
 def cmd_run(args: argparse.Namespace) -> int:
-    from .transcribe import pick_device, transcribe
+    from .transcribe import device_note, pick_device, transcribe
 
     source = Path(args.source)
     outdir = Path(args.output)
@@ -137,6 +139,8 @@ def cmd_run(args: argparse.Namespace) -> int:
         device, compute = pick_device(args.device)
         print(f"Transcribing {source.name} — whisper '{args.model}' on {device} ({compute})…",
               file=sys.stderr)
+        if note := device_note(device):
+            print(f"  {note}", file=sys.stderr)
         transcript = transcribe(source, model_size=args.model, language=args.language,
                                 device=args.device)
         transcript.to_json(transcript_path)
@@ -159,8 +163,9 @@ def _add_ranking_args(parser: argparse.ArgumentParser) -> None:
 
 def _add_render_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--reframe", choices=["blur", "crop"], default="blur")
-    parser.add_argument("--encoder", choices=["auto", "nvenc", "cpu"], default="auto",
-                        help="auto uses the GPU when one is usable (default)")
+    parser.add_argument("--encoder",
+                        choices=["auto", "nvenc", "videotoolbox", "cpu"], default="auto",
+                        help="auto uses hardware encoding when it is usable (default)")
     parser.add_argument("--no-captions", action="store_true")
     parser.add_argument("--words-per-caption", type=int, default=3)
     parser.add_argument("--font-size", type=int, default=92)

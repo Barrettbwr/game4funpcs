@@ -301,50 +301,75 @@ class TestRender(unittest.TestCase):
 
 
 class TestEncoderSelection(unittest.TestCase):
-    """Mocked so the result does not depend on whether this machine has a GPU."""
+    """Mocked so results do not depend on this machine's hardware."""
 
     def setUp(self):
         from clipper import render
 
-        render.nvenc_usable.cache_clear()
+        render.encoder_usable.cache_clear()
         self.render = render
 
     def tearDown(self):
-        self.render.nvenc_usable.cache_clear()
+        self.render.encoder_usable.cache_clear()
+
+    def _usable(self, *names):
+        """Patch encoder_usable so only `names` report as usable."""
+        return unittest.mock.patch.object(
+            self.render, "encoder_usable", side_effect=lambda n: n in names
+        )
+
+    def test_libx264_always_usable_without_probing(self):
+        self.assertTrue(self.render.encoder_usable("libx264"))
+
+    def test_auto_prefers_nvenc(self):
+        with self._usable("h264_nvenc", "h264_videotoolbox"):
+            self.assertEqual(self.render.resolve_encoder("auto"), "h264_nvenc")
+
+    def test_auto_takes_videotoolbox_on_apple(self):
+        with self._usable("h264_videotoolbox"):
+            self.assertEqual(self.render.resolve_encoder("auto"), "h264_videotoolbox")
+
+    def test_auto_falls_back_to_cpu(self):
+        with self._usable():
+            self.assertEqual(self.render.resolve_encoder("auto"), "libx264")
 
     def test_cpu_preference_never_probes(self):
-        with unittest.mock.patch.object(self.render, "nvenc_usable") as probe:
+        with unittest.mock.patch.object(self.render, "encoder_usable") as probe:
             self.assertEqual(self.render.resolve_encoder("cpu"), "libx264")
             probe.assert_not_called()
 
-    def test_auto_picks_gpu_when_available(self):
-        with unittest.mock.patch.object(self.render, "nvenc_usable", return_value=True):
-            self.assertEqual(self.render.resolve_encoder("auto"), "h264_nvenc")
-
-    def test_auto_falls_back_to_cpu(self):
-        with unittest.mock.patch.object(self.render, "nvenc_usable", return_value=False):
-            self.assertEqual(self.render.resolve_encoder("auto"), "libx264")
-
     def test_explicit_nvenc_fails_loudly_when_unusable(self):
-        with unittest.mock.patch.object(self.render, "nvenc_usable", return_value=False):
+        with self._usable("h264_videotoolbox"):
             with self.assertRaises(RuntimeError) as caught:
                 self.render.resolve_encoder("nvenc")
             self.assertIn("--encoder cpu", str(caught.exception))
+            self.assertIn("NVIDIA", str(caught.exception))
+
+    def test_explicit_videotoolbox_fails_loudly_when_unusable(self):
+        with self._usable("h264_nvenc"):
+            with self.assertRaises(RuntimeError) as caught:
+                self.render.resolve_encoder("videotoolbox")
+            self.assertIn("VideoToolbox", str(caught.exception))
 
     def test_unknown_preference_rejected(self):
         with self.assertRaises(ValueError):
             self.render.resolve_encoder("magic")
 
-    def test_gpu_path_adds_cuda_decode(self):
+    def test_decode_args_match_encoder(self):
         self.assertEqual(self.render._decode_args("h264_nvenc"), ["-hwaccel", "cuda"])
+        self.assertEqual(self.render._decode_args("h264_videotoolbox"),
+                         ["-hwaccel", "videotoolbox"])
         self.assertEqual(self.render._decode_args("libx264"), [])
 
-    def test_encoder_args_differ(self):
-        gpu = self.render._encoder_args("h264_nvenc")
+    def test_encoder_args_are_distinct(self):
+        nvenc = self.render._encoder_args("h264_nvenc")
+        vt = self.render._encoder_args("h264_videotoolbox")
         cpu = self.render._encoder_args("libx264")
-        self.assertIn("h264_nvenc", gpu)
-        self.assertIn("libx264", cpu)
-        self.assertIn("-cq", gpu)
+        self.assertIn("-cq", nvenc)
+        # VideoToolbox has no CRF/CQ mode; it must be driven by bitrate.
+        self.assertIn("-b:v", vt)
+        self.assertNotIn("-crf", vt)
+        self.assertNotIn("-cq", vt)
         self.assertIn("-crf", cpu)
 
 
@@ -378,6 +403,21 @@ class TestDeviceSelection(unittest.TestCase):
     def test_unknown_preference_rejected(self):
         with self.assertRaises(ValueError):
             self.transcribe.pick_device("tpu")
+
+    def test_apple_silicon_cpu_run_is_explained(self):
+        with unittest.mock.patch.object(self.transcribe, "is_apple_silicon",
+                                        return_value=True):
+            note = self.transcribe.device_note("cpu")
+        self.assertIn("Metal", note)
+        self.assertIn("mlx-whisper", note)
+
+    def test_no_note_on_cuda(self):
+        self.assertEqual(self.transcribe.device_note("cuda"), "")
+
+    def test_no_note_on_ordinary_cpu(self):
+        with unittest.mock.patch.object(self.transcribe, "is_apple_silicon",
+                                        return_value=False):
+            self.assertEqual(self.transcribe.device_note("cpu"), "")
 
 
 if __name__ == "__main__":

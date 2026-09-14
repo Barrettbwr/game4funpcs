@@ -16,19 +16,38 @@ from .captions import build_ass
 from .model import Candidate, ClipSpec, Transcript
 
 
-@functools.lru_cache(maxsize=1)
-def nvenc_usable() -> bool:
-    """Whether h264_nvenc can actually encode here.
+# Hardware encoders in preference order. NVENC first: where both somehow
+# exist, a discrete NVIDIA part out-encodes Apple's media engine.
+HARDWARE_ENCODERS = ("h264_nvenc", "h264_videotoolbox")
+
+ENCODER_NAMES = {
+    "nvenc": "h264_nvenc",
+    "videotoolbox": "h264_videotoolbox",
+    "cpu": "libx264",
+}
+
+_MISSING_HARDWARE = {
+    "h264_nvenc": "Check that an NVIDIA GPU and driver are present",
+    "h264_videotoolbox": "VideoToolbox needs macOS on Apple Silicon or a Mac with a supported GPU",
+}
+
+
+@functools.lru_cache(maxsize=None)
+def encoder_usable(name: str) -> bool:
+    """Whether `name` can actually encode here.
 
     Being compiled into ffmpeg is not the same as being usable: a build happily
-    lists h264_nvenc on a machine with no NVIDIA driver and then fails at run
-    time. The only honest test is to encode a frame.
+    lists h264_nvenc on a machine with no NVIDIA driver, and h264_videotoolbox
+    on anything Apple-adjacent, then fails at run time. The only honest test is
+    to encode a frame.
     """
+    if name == "libx264":
+        return True
     try:
         result = subprocess.run(
             ["ffmpeg", "-hide_banner", "-loglevel", "error",
              "-f", "lavfi", "-i", "color=black:s=64x64:d=0.1",
-             "-c:v", "h264_nvenc", "-f", "null", "-"],
+             "-c:v", name, "-f", "null", "-"],
             capture_output=True, timeout=30,
         )
         return result.returncode == 0
@@ -38,18 +57,23 @@ def nvenc_usable() -> bool:
 
 def resolve_encoder(preference: str) -> str:
     """Map a preference to a concrete encoder name."""
-    if preference == "cpu":
-        return "libx264"
-    if preference == "nvenc":
-        if not nvenc_usable():
-            raise RuntimeError(
-                "NVENC was requested but is not usable here. Check that an "
-                "NVIDIA GPU and driver are present, or pass --encoder cpu."
-            )
-        return "h264_nvenc"
     if preference == "auto":
-        return "h264_nvenc" if nvenc_usable() else "libx264"
-    raise ValueError(f"unknown encoder preference: {preference!r}")
+        for name in HARDWARE_ENCODERS:
+            if encoder_usable(name):
+                return name
+        return "libx264"
+    if preference == "cpu":
+        return "libx264"  # always present; the probe below is for hardware only
+
+    name = ENCODER_NAMES.get(preference)
+    if name is None:
+        raise ValueError(f"unknown encoder preference: {preference!r}")
+    if not encoder_usable(name):
+        raise RuntimeError(
+            f"{preference} was requested but {name} is not usable here. "
+            f"{_MISSING_HARDWARE.get(name, '')}, or pass --encoder cpu."
+        )
+    return name
 
 
 def _encoder_args(encoder: str) -> list[str]:
@@ -60,14 +84,26 @@ def _encoder_args(encoder: str) -> list[str]:
             "-c:v", "h264_nvenc", "-preset", "p5", "-tune", "hq",
             "-rc", "vbr", "-cq", "23", "-b:v", "0",
         ]
+    if encoder == "h264_videotoolbox":
+        # VideoToolbox has no CRF mode and -q:v support varies by ffmpeg build,
+        # so drive it by bitrate, which every version honours. 8 Mbps is
+        # generous for 1080x1920/30 and well above what the platforms keep.
+        return [
+            "-c:v", "h264_videotoolbox",
+            "-b:v", "8M", "-maxrate", "10M", "-bufsize", "16M",
+        ]
     return ["-c:v", "libx264", "-preset", "medium", "-crf", "20"]
 
 
 def _decode_args(encoder: str) -> list[str]:
-    # Decode on the GPU too, but let frames come back to system memory: the
-    # blur and subtitle filters are CPU-side, so keeping frames in VRAM would
-    # force a download anyway.
-    return ["-hwaccel", "cuda"] if encoder == "h264_nvenc" else []
+    # Decode in hardware too, but let frames come back to system memory: the
+    # blur and subtitle filters are CPU-side, so keeping frames on the GPU
+    # would force a download anyway.
+    if encoder == "h264_nvenc":
+        return ["-hwaccel", "cuda"]
+    if encoder == "h264_videotoolbox":
+        return ["-hwaccel", "videotoolbox"]
+    return []
 
 
 def _video_chain(spec: ClipSpec, burn_captions: bool) -> str:
