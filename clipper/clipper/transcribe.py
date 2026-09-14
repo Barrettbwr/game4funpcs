@@ -1,13 +1,52 @@
-"""Audio extraction and word-level transcription."""
+"""Audio extraction and word-level transcription.
+
+Transcription is the slowest stage by a wide margin, and the one that benefits
+most from a GPU. On CUDA it runs in float16, which makes the `large-v3` model
+practical — worth taking, because better word timings mean tighter clip
+boundaries and captions that stay in sync.
+"""
 
 from __future__ import annotations
 
+import functools
 import json
 import subprocess
 import tempfile
 from pathlib import Path
 
 from .model import Transcript, Word
+
+
+@functools.lru_cache(maxsize=1)
+def cuda_devices() -> int:
+    """Number of CUDA devices CTranslate2 can actually see (0 if none)."""
+    try:
+        import ctranslate2
+
+        return ctranslate2.get_cuda_device_count()
+    except Exception:
+        return 0
+
+
+def pick_device(preference: str = "auto") -> tuple[str, str]:
+    """Resolve a device preference to a (device, compute_type) pair.
+
+    int8 on CPU and float16 on CUDA are the sane defaults: int8 is what makes
+    CPU transcription bearable at all, float16 is what makes the large models
+    fast enough to be the obvious choice on a GPU.
+    """
+    if preference == "cpu":
+        return "cpu", "int8"
+    if preference == "cuda":
+        if cuda_devices() == 0:
+            raise RuntimeError(
+                "CUDA was requested but CTranslate2 sees no CUDA device. "
+                "Check the NVIDIA driver and CUDA runtime, or pass --device cpu."
+            )
+        return "cuda", "float16"
+    if preference == "auto":
+        return ("cuda", "float16") if cuda_devices() else ("cpu", "int8")
+    raise ValueError(f"unknown device preference: {preference!r}")
 
 
 def probe_duration(source: Path) -> float:
@@ -34,7 +73,6 @@ def transcribe(
     model_size: str = "base",
     language: str | None = None,
     device: str = "auto",
-    compute_type: str = "int8",
 ) -> Transcript:
     """Transcribe with word timings.
 
@@ -43,9 +81,13 @@ def transcribe(
     """
     from faster_whisper import WhisperModel
 
+    resolved_device, compute_type = pick_device(device)
+
     with tempfile.TemporaryDirectory() as tmp:
         audio = extract_audio(source, Path(tmp) / "audio.wav")
-        model = WhisperModel(model_size, device=device, compute_type=compute_type)
+        model = WhisperModel(
+            model_size, device=resolved_device, compute_type=compute_type
+        )
         segments, info = model.transcribe(
             str(audio),
             language=language,

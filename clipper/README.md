@@ -90,6 +90,40 @@ Unknown keys are rejected loudly rather than silently ignored.
 
 `--covers` also writes a cover frame per clip.
 
+## GPU
+
+Two stages are hardware-bound, and both use an NVIDIA GPU automatically when
+one is usable. Nothing needs configuring — `auto` probes and falls back.
+
+| Stage | CPU | GPU |
+| --- | --- | --- |
+| Transcription | `int8` on CPU cores | `float16` on CUDA |
+| Encoding | `libx264` | `h264_nvenc` + CUDA decode |
+
+```sh
+clipper run talk.mp4 -o clips              # auto-detects
+clipper run talk.mp4 --device cuda --encoder nvenc   # force, fail loudly if absent
+clipper run talk.mp4 --device cpu --encoder cpu      # force CPU
+```
+
+Both `auto` paths probe for real rather than trusting a capability list:
+ffmpeg will happily report `h264_nvenc` as compiled in on a machine with no
+driver, so the check encodes one frame. `--encoder nvenc` and `--device cuda`
+raise rather than silently falling back, which is what you want in a batch
+script.
+
+**The model size is where the GPU pays off.** On CPU you take `base` because
+anything larger is too slow to iterate with. On a GPU, `large-v3` is practical,
+and the tighter word timings mean better clip boundaries and captions that stay
+in sync:
+
+```sh
+clipper transcribe talk.mp4 --model large-v3 -o transcript.json
+```
+
+`large-v3` in float16 needs roughly 5 GB of VRAM, so anything from 8 GB up has
+room to spare.
+
 ## Why candidates don't overlap
 
 `select()` does greedy non-maximum suppression: best clip first, then drop
@@ -103,7 +137,7 @@ moment.
 python -m unittest discover -s tests -v
 ```
 
-35 tests. The render tests generate a real source with ffmpeg and assert the
+47 tests. The render tests generate a real source with ffmpeg and assert the
 output is genuinely 1080×1920; they skip automatically if ffmpeg is absent.
 
 ## Layout

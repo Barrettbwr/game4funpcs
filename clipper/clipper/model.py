@@ -126,6 +126,7 @@ class ClipSpec:
     target_width: int = 1080
     target_height: int = 1920
     reframe: str = "blur"  # "blur" | "crop"
+    encoder: str = "auto"  # "auto" | "nvenc" | "cpu"
     captions: bool = True
     words_per_caption: int = 3
     loudness_lufs: float = -14.0

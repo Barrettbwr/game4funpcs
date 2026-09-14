@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 
 from clipper import candidates as candidates_mod
@@ -297,6 +298,86 @@ class TestRender(unittest.TestCase):
         out = render_cover(self.source, candidate, Path(self.tmp.name) / "cover.jpg")
         self.assertTrue(out.exists())
         self.assertEqual(self._dimensions(out), (1080, 1920))
+
+
+class TestEncoderSelection(unittest.TestCase):
+    """Mocked so the result does not depend on whether this machine has a GPU."""
+
+    def setUp(self):
+        from clipper import render
+
+        render.nvenc_usable.cache_clear()
+        self.render = render
+
+    def tearDown(self):
+        self.render.nvenc_usable.cache_clear()
+
+    def test_cpu_preference_never_probes(self):
+        with unittest.mock.patch.object(self.render, "nvenc_usable") as probe:
+            self.assertEqual(self.render.resolve_encoder("cpu"), "libx264")
+            probe.assert_not_called()
+
+    def test_auto_picks_gpu_when_available(self):
+        with unittest.mock.patch.object(self.render, "nvenc_usable", return_value=True):
+            self.assertEqual(self.render.resolve_encoder("auto"), "h264_nvenc")
+
+    def test_auto_falls_back_to_cpu(self):
+        with unittest.mock.patch.object(self.render, "nvenc_usable", return_value=False):
+            self.assertEqual(self.render.resolve_encoder("auto"), "libx264")
+
+    def test_explicit_nvenc_fails_loudly_when_unusable(self):
+        with unittest.mock.patch.object(self.render, "nvenc_usable", return_value=False):
+            with self.assertRaises(RuntimeError) as caught:
+                self.render.resolve_encoder("nvenc")
+            self.assertIn("--encoder cpu", str(caught.exception))
+
+    def test_unknown_preference_rejected(self):
+        with self.assertRaises(ValueError):
+            self.render.resolve_encoder("magic")
+
+    def test_gpu_path_adds_cuda_decode(self):
+        self.assertEqual(self.render._decode_args("h264_nvenc"), ["-hwaccel", "cuda"])
+        self.assertEqual(self.render._decode_args("libx264"), [])
+
+    def test_encoder_args_differ(self):
+        gpu = self.render._encoder_args("h264_nvenc")
+        cpu = self.render._encoder_args("libx264")
+        self.assertIn("h264_nvenc", gpu)
+        self.assertIn("libx264", cpu)
+        self.assertIn("-cq", gpu)
+        self.assertIn("-crf", cpu)
+
+
+class TestDeviceSelection(unittest.TestCase):
+    def setUp(self):
+        from clipper import transcribe
+
+        transcribe.cuda_devices.cache_clear()
+        self.transcribe = transcribe
+
+    def tearDown(self):
+        self.transcribe.cuda_devices.cache_clear()
+
+    def test_cpu_is_int8(self):
+        self.assertEqual(self.transcribe.pick_device("cpu"), ("cpu", "int8"))
+
+    def test_auto_prefers_cuda_float16(self):
+        with unittest.mock.patch.object(self.transcribe, "cuda_devices", return_value=1):
+            self.assertEqual(self.transcribe.pick_device("auto"), ("cuda", "float16"))
+
+    def test_auto_falls_back_to_cpu(self):
+        with unittest.mock.patch.object(self.transcribe, "cuda_devices", return_value=0):
+            self.assertEqual(self.transcribe.pick_device("auto"), ("cpu", "int8"))
+
+    def test_explicit_cuda_fails_loudly_when_absent(self):
+        with unittest.mock.patch.object(self.transcribe, "cuda_devices", return_value=0):
+            with self.assertRaises(RuntimeError) as caught:
+                self.transcribe.pick_device("cuda")
+            self.assertIn("--device cpu", str(caught.exception))
+
+    def test_unknown_preference_rejected(self):
+        with self.assertRaises(ValueError):
+            self.transcribe.pick_device("tpu")
 
 
 if __name__ == "__main__":

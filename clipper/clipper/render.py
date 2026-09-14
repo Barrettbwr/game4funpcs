@@ -1,13 +1,73 @@
-"""ffmpeg rendering: cut, reframe to vertical, burn captions, normalise audio."""
+"""ffmpeg rendering: cut, reframe to vertical, burn captions, normalise audio.
+
+Encoding runs on an NVIDIA GPU when one is usable. Rendering is the only part
+of the pipeline that is encode-bound, so on a batch of clips this is the
+difference between minutes and tens of minutes.
+"""
 
 from __future__ import annotations
 
+import functools
 import subprocess
 import tempfile
 from pathlib import Path
 
 from .captions import build_ass
 from .model import Candidate, ClipSpec, Transcript
+
+
+@functools.lru_cache(maxsize=1)
+def nvenc_usable() -> bool:
+    """Whether h264_nvenc can actually encode here.
+
+    Being compiled into ffmpeg is not the same as being usable: a build happily
+    lists h264_nvenc on a machine with no NVIDIA driver and then fails at run
+    time. The only honest test is to encode a frame.
+    """
+    try:
+        result = subprocess.run(
+            ["ffmpeg", "-hide_banner", "-loglevel", "error",
+             "-f", "lavfi", "-i", "color=black:s=64x64:d=0.1",
+             "-c:v", "h264_nvenc", "-f", "null", "-"],
+            capture_output=True, timeout=30,
+        )
+        return result.returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def resolve_encoder(preference: str) -> str:
+    """Map a preference to a concrete encoder name."""
+    if preference == "cpu":
+        return "libx264"
+    if preference == "nvenc":
+        if not nvenc_usable():
+            raise RuntimeError(
+                "NVENC was requested but is not usable here. Check that an "
+                "NVIDIA GPU and driver are present, or pass --encoder cpu."
+            )
+        return "h264_nvenc"
+    if preference == "auto":
+        return "h264_nvenc" if nvenc_usable() else "libx264"
+    raise ValueError(f"unknown encoder preference: {preference!r}")
+
+
+def _encoder_args(encoder: str) -> list[str]:
+    if encoder == "h264_nvenc":
+        # Constant-quality VBR. p5 balances speed against quality; the platform
+        # re-encodes on upload anyway, so chasing x264-slow fidelity is wasted.
+        return [
+            "-c:v", "h264_nvenc", "-preset", "p5", "-tune", "hq",
+            "-rc", "vbr", "-cq", "23", "-b:v", "0",
+        ]
+    return ["-c:v", "libx264", "-preset", "medium", "-crf", "20"]
+
+
+def _decode_args(encoder: str) -> list[str]:
+    # Decode on the GPU too, but let frames come back to system memory: the
+    # blur and subtitle filters are CPU-side, so keeping frames in VRAM would
+    # force a download anyway.
+    return ["-hwaccel", "cuda"] if encoder == "h264_nvenc" else []
 
 
 def _video_chain(spec: ClipSpec, burn_captions: bool) -> str:
@@ -48,6 +108,7 @@ def render_clip(
     """Render one candidate to `destination`."""
     spec = spec or ClipSpec()
     destination.parent.mkdir(parents=True, exist_ok=True)
+    encoder = resolve_encoder(spec.encoder)
 
     words = transcript.words_between(candidate.start, candidate.end)
     burn = spec.captions and bool(words)
@@ -61,6 +122,7 @@ def render_clip(
 
         command = [
             "ffmpeg", "-y", "-loglevel", "error",
+            *_decode_args(encoder),
             "-ss", f"{candidate.start:.3f}",
             "-i", str(source.resolve()),
             "-t", f"{candidate.duration:.3f}",
@@ -68,7 +130,7 @@ def render_clip(
             "-map", "[v]",
             "-map", "0:a?",
             "-af", f"loudnorm=I={spec.loudness_lufs}:TP=-1.5:LRA=11",
-            "-c:v", "libx264", "-preset", "medium", "-crf", "20",
+            *_encoder_args(encoder),
             "-pix_fmt", "yuv420p", "-r", "30",
             "-c:a", "aac", "-b:a", "160k", "-ar", "48000",
             "-movflags", "+faststart",

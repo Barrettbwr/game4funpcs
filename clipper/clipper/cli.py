@@ -25,6 +25,7 @@ def _load_spec(args: argparse.Namespace) -> ClipSpec:
         captions=not args.no_captions,
         words_per_caption=args.words_per_caption,
         font_size=args.font_size,
+        encoder=args.encoder,
     )
 
 
@@ -56,11 +57,14 @@ def _print_table(chosen) -> None:
 # --- commands ---------------------------------------------------------------
 
 def cmd_transcribe(args: argparse.Namespace) -> int:
-    from .transcribe import transcribe
+    from .transcribe import pick_device, transcribe
 
     source = Path(args.source)
-    print(f"Transcribing {source.name} with whisper '{args.model}'…", file=sys.stderr)
-    transcript = transcribe(source, model_size=args.model, language=args.language)
+    device, compute = pick_device(args.device)
+    print(f"Transcribing {source.name} — whisper '{args.model}' on {device} ({compute})…",
+          file=sys.stderr)
+    transcript = transcribe(source, model_size=args.model, language=args.language,
+                            device=args.device)
     destination = Path(args.output)
     transcript.to_json(destination)
     print(f"{len(transcript.words)} words → {destination}", file=sys.stderr)
@@ -78,12 +82,15 @@ def cmd_rank(args: argparse.Namespace) -> int:
 
 
 def cmd_cut(args: argparse.Namespace) -> int:
-    from .render import render_clip, render_cover
+    from .render import render_clip, render_cover, resolve_encoder
 
     source = Path(args.source)
     transcript = Transcript.from_json(Path(args.transcript))
     chosen = _rank(transcript, args)
     spec = _load_spec(args)
+    encoder = resolve_encoder(spec.encoder)
+    print(f"Encoding with {encoder}"
+          f"{' (GPU)' if encoder.endswith('nvenc') else ' (CPU)'}", file=sys.stderr)
     outdir = Path(args.output)
     outdir.mkdir(parents=True, exist_ok=True)
 
@@ -116,7 +123,7 @@ def cmd_cut(args: argparse.Namespace) -> int:
 
 
 def cmd_run(args: argparse.Namespace) -> int:
-    from .transcribe import transcribe
+    from .transcribe import pick_device, transcribe
 
     source = Path(args.source)
     outdir = Path(args.output)
@@ -127,8 +134,11 @@ def cmd_run(args: argparse.Namespace) -> int:
         print(f"Reusing {transcript_path}", file=sys.stderr)
         transcript = Transcript.from_json(transcript_path)
     else:
-        print(f"Transcribing {source.name} with whisper '{args.model}'…", file=sys.stderr)
-        transcript = transcribe(source, model_size=args.model, language=args.language)
+        device, compute = pick_device(args.device)
+        print(f"Transcribing {source.name} — whisper '{args.model}' on {device} ({compute})…",
+              file=sys.stderr)
+        transcript = transcribe(source, model_size=args.model, language=args.language,
+                                device=args.device)
         transcript.to_json(transcript_path)
 
     args.transcript = str(transcript_path)
@@ -149,6 +159,8 @@ def _add_ranking_args(parser: argparse.ArgumentParser) -> None:
 
 def _add_render_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--reframe", choices=["blur", "crop"], default="blur")
+    parser.add_argument("--encoder", choices=["auto", "nvenc", "cpu"], default="auto",
+                        help="auto uses the GPU when one is usable (default)")
     parser.add_argument("--no-captions", action="store_true")
     parser.add_argument("--words-per-caption", type=int, default=3)
     parser.add_argument("--font-size", type=int, default=92)
@@ -167,6 +179,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("-o", "--output", default="transcript.json")
     p.add_argument("--model", default="base", help="whisper size (tiny/base/small/medium/large-v3)")
     p.add_argument("--language", default=None)
+    p.add_argument("--device", choices=["auto", "cuda", "cpu"], default="auto")
     p.set_defaults(func=cmd_transcribe)
 
     p = subparsers.add_parser("rank", help="transcript.json → ranked candidates")
@@ -188,6 +201,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("-o", "--output", default="clips")
     p.add_argument("--model", default="base")
     p.add_argument("--language", default=None)
+    p.add_argument("--device", choices=["auto", "cuda", "cpu"], default="auto")
     p.add_argument("--retranscribe", action="store_true")
     _add_ranking_args(p)
     _add_render_args(p)
