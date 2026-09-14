@@ -1,0 +1,13 @@
+[project]
+name = "clipper"
+version = "0.1.0"
+description = "Find and cut short-form clips from long-form video"
+requires-python = ">=3.11"
+dependencies = ["faster-whisper>=1.0"]
+
+[project.scripts]
+clipper = "clipper.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
